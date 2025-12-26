@@ -104,7 +104,9 @@ def compute_metrics_batch(pred_batch, gt_batch):
     pred_batch / gt_batch : (B,1,H,W)  tensor  0-1 probabilities
     returns dict with scalar mean values
     """
-    pred_batch = torch.sigmoid(pred_batch).cpu().numpy().squeeze(1)
+    #pred_batch = torch.sigmoid(pred_batch).cpu().numpy().squeeze(1)
+    # arg-max binarisation identical to the old iou_pytorch
+    pred_batch = (pred_batch > 0).float().cpu().numpy().squeeze(1)
     gt_batch   = gt_batch.cpu().numpy().squeeze(1)
 
     dsc, iouv, f1, fw, sa, ex, maev = [], [], [], [], [], [], []

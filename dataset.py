@@ -42,12 +42,18 @@ def get_dataloaders(cfg):
     from torch.utils.data import DataLoader
     mean, std = (0.5,0.5,0.5), (0.5,0.5,0.5)
     train_aug = A.Compose([
-        A.Resize(cfg['img_size'], cfg['img_size']),
-        A.HorizontalFlip(p=0.5),
-        A.RandomRotate90(p=0.5),
-        A.ColorJitter(0.2,0.2,0.2,0.1,p=0.5),
-        A.Normalize(mean=mean, std=std), A.pytorch.ToTensorV2()
-    ])
+    A.Resize(cfg['img_size'], cfg['img_size']),
+    A.HorizontalFlip(p=0.5),
+    A.VerticalFlip(p=0.5),
+    A.RandomRotate90(p=0.5),
+    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=45,
+                       border_mode=cv2.BORDER_CONSTANT, value=0, p=0.7),
+    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+    A.GaussNoise(var_limit=(0, 50), p=0.3),
+    A.CoarseDropout(max_holes=5, max_height=32, max_width=32, fill_value=0, p=0.3),
+    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+    A.pytorch.ToTensorV2()
+])
     val_aug = A.Compose([
         A.Resize(cfg['img_size'], cfg['img_size']),
         A.Normalize(mean=mean, std=std), A.pytorch.ToTensorV2()
