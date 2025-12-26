@@ -1,0 +1,17 @@
+.vscode 
+__pycache__
+*.pyc
+.DS_Store
+env
+*.pth
+logs
+results
+*.log
+checkpoints
+weights
+*.weights
+runs
+data
+*.pdf
+*.png
+*.jpg
