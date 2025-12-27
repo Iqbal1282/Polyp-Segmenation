@@ -6,6 +6,7 @@ from models import build_model
 from utils import set_seed, iou_pytorch
 from torch.optim.lr_scheduler import OneCycleLR
 from segmentation_models_pytorch.losses import DiceLoss
+import torch.nn as nn
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 set_seed(CFG['seed'])
