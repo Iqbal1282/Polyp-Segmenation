@@ -26,27 +26,50 @@ set_seed(CFG['seed'])
 os.makedirs('weights', exist_ok=True)
 
 train_loader, val_loader = get_dataloaders(CFG)
-model, backbone = build_model(CFG, device)
+model, _ = build_model(CFG, device)
+
+backbone = model.backbone
+total_blocks = len(backbone.blocks)        # 32
+cutoff = total_blocks - 4                  # 28
+for i in range(cutoff, total_blocks):
+    for p in backbone.blocks[i].parameters():
+        p.requires_grad = True
+
 
 criterion_dice = DiceLoss(mode='multiclass', from_logits=True)
 criterion_ce   = nn.CrossEntropyLoss()
 
-optimizer = torch.optim.AdamW(model.decode_head.parameters(),
-                              lr=CFG['lr'],
-                              weight_decay=CFG['weight_decay'])
+#optimizer = torch.optim.AdamW(model.decode_head.parameters(),
+#                              lr=CFG['lr'],
+#                              weight_decay=CFG['weight_decay'])
+
+optimizer = torch.optim.AdamW([
+    {'params': (p for p in backbone.blocks[cutoff:].parameters()
+                if p.requires_grad), 'lr': 1e-5},   # last 4 blocks
+    {'params': model.decode_head.parameters(),      'lr': 1e-3}    # decode head
+    ], weight_decay=CFG['weight_decay'])
 
 max_lr = 3e-3
 pct_start = 0.15
 div_factor = 25
-scheduler = OneCycleLR(optimizer, max_lr=max_lr,
-                       epochs=CFG['epochs'], steps_per_epoch=len(train_loader),
-                       pct_start=pct_start, div_factor=div_factor)
+#scheduler = OneCycleLR(optimizer, max_lr=max_lr,
+#                       epochs=CFG['epochs'], steps_per_epoch=len(train_loader),
+#                       pct_start=pct_start, div_factor=div_factor)
+
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=[1e-5, 1e-3],          # same order as param groups
+    epochs=CFG['epochs'],
+    steps_per_epoch=len(train_loader),
+    pct_start=0.1,
+    div_factor=10
+)
 
 best_iou = 0.
 
 for epoch in range(1, CFG['epochs']+1):
     # ---------- train ----------
-    model.train(); backbone.eval()
+    model.train() #; backbone.eval()
     train_loss, train_iou = [], []
     train_dice = []
     grad_norm = 0.
@@ -63,6 +86,7 @@ for epoch in range(1, CFG['epochs']+1):
         grad_norm = total_norm ** 0.5
         optimizer.step()
         scheduler.step()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         train_loss.append(loss.item())
         train_iou.append(iou_pytorch(logits.argmax(1), mask))
@@ -94,10 +118,11 @@ for epoch in range(1, CFG['epochs']+1):
     writer.add_scalar('Hyperparams/GradNorm', grad_norm, epoch)
     writer.add_scalar('Metrics/Train_Dice', np.mean(train_dice), epoch)
     writer.add_scalar('Metrics/Val_Dice',   np.mean(val_dice), epoch)
-    
+
 
     print(f'E{epoch:02d} | tr_loss {tr_loss:.4f} tr_iou {tr_miou:.4f} | '
-          f'vl_loss {vl_loss:.4f} vl_iou {vl_miou:.4f}')
+          f'vl_loss {vl_loss:.4f} vl_iou {vl_miou:.4f} val_dice {np.mean(val_dice):.4f}')
+    
     
     if vl_miou > best_iou:
         best_iou = vl_miou
