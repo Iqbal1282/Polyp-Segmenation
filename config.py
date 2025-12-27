@@ -6,7 +6,7 @@ CFG = {
     'num_classes': 2,                 # background + tumor
     'batch_size' : 16,
     'lr'         : 1e-3,
-    'epochs'     : 30,
+    'epochs'     : 60,
     'weight_decay': 1e-4,
     'num_workers': 0,
     'seed'       : 42,

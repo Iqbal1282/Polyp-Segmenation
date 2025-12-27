@@ -73,5 +73,8 @@ if __name__ == '__main__':
     x = torch.randn(2, 3, 448, 448)
     with torch.no_grad():
         logits = model(x)
-    print(logits.shape)   # (2, 2, 224, 224)
+
+
+    print(model)
+    #print(logits.shape)   # (2, 2, 224, 224)
     #assert logits.shape == (2, 2, 224, 224)
