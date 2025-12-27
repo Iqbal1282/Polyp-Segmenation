@@ -2,6 +2,7 @@ import cv2, numpy as np
 from pathlib import Path
 from torch.utils.data import Dataset
 import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 class SegDataset(Dataset):
     def __init__(self, img_dir, mask_dir, transforms=None):
@@ -42,21 +43,35 @@ def get_dataloaders(cfg):
     from torch.utils.data import DataLoader
     mean, std = (0.5,0.5,0.5), (0.5,0.5,0.5)
     train_aug = A.Compose([
-    A.Resize(cfg['img_size'], cfg['img_size']),
-    A.HorizontalFlip(p=0.5),
-    A.VerticalFlip(p=0.5),
-    A.RandomRotate90(p=0.5),
-    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=45,
-                       border_mode=cv2.BORDER_CONSTANT, value=0, p=0.7),
-    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
-    A.GaussNoise(var_limit=(0, 50), p=0.3),
-    A.CoarseDropout(max_holes=5, max_height=32, max_width=32, fill_value=0, p=0.3),
-    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-    A.pytorch.ToTensorV2()
-])
+        A.Resize(cfg['img_size'], cfg['img_size']),
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+        A.ShiftScaleRotate(
+            shift_limit=0.1,
+            scale_limit=0.2,
+            rotate_limit=45,
+            border_mode=cv2.BORDER_CONSTANT,
+            fill_value=0,
+            p=0.7
+        ),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+        A.GaussNoise(var_limit=(0, 50), p=0.3),          # ← var_limit
+        A.CoarseDropout(
+            max_holes=5,
+            max_height=32,
+            max_width=32,
+            fill_value=0,
+            p=0.3
+        ),
+        A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        ToTensorV2()
+    ])
+
     val_aug = A.Compose([
         A.Resize(cfg['img_size'], cfg['img_size']),
-        A.Normalize(mean=mean, std=std), A.pytorch.ToTensorV2()
+        A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)), 
+        ToTensorV2()
     ])
 
     tr_ds = SegDataset(cfg['root']/"Kvasir-SEG"/'images',
