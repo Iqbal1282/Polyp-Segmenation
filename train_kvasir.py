@@ -4,6 +4,8 @@ from config import CFG
 from dataset import get_dataloaders
 from models import build_model
 from utils import set_seed, iou_pytorch
+from torch.optim.lr_scheduler import OneCycleLR
+from segmentation_models_pytorch.losses import DiceLoss
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 set_seed(CFG['seed'])
@@ -12,10 +14,20 @@ os.makedirs('weights', exist_ok=True)
 train_loader, val_loader = get_dataloaders(CFG)
 model, backbone = build_model(CFG, device)
 
-criterion = torch.nn.CrossEntropyLoss()
+#criterion = torch.nn.CrossEntropyLoss()
+criterion = DiceLoss(mode='binary', from_logits=True) + \
+            nn.CrossEntropyLoss()
 optimizer = torch.optim.AdamW(model.decode_head.parameters(),
                               lr=CFG['lr'],
                               weight_decay=CFG['weight_decay'])
+
+
+max_lr = 3e-3          # for decode head
+pct_start = 0.15
+div_factor = 25
+scheduler = OneCycleLR(optimizer, max_lr=max_lr,
+                       epochs=CFG['epochs'], steps_per_epoch=len(train_loader),
+                       pct_start=pct_start, div_factor=div_factor)
 
 writer = SummaryWriter('runs/kvasir_ijepa_seg')
 best_iou = 0.
@@ -38,6 +50,7 @@ for epoch in range(1, CFG['epochs']+1):
                          for p in model.decode_head.parameters() if p.grad is not None)
         grad_norm = total_norm ** 0.5
         optimizer.step()
+        scheduler.step()
 
         train_loss.append(loss.item())
         train_iou.append(iou_pytorch(logits.argmax(1), mask))
