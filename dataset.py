@@ -47,23 +47,31 @@ def get_dataloaders(cfg):
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=0.5),
-        A.ShiftScaleRotate(
-            shift_limit=0.1,
-            scale_limit=0.2,
-            rotate_limit=45,
-            border_mode=cv2.BORDER_CONSTANT,
-            fill_value=0,
+
+        # 1.  Affine replaces ShiftScaleRotate
+        A.Affine(
+            translate_percent=(-0.1, 0.1),
+            scale=(0.8, 1.2),
+            rotate=(-45, 45),
+            mode=cv2.BORDER_CONSTANT,
+            cval=0,
             p=0.7
         ),
+
         A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
-        A.GaussNoise(var_limit=(0, 50), p=0.3),          # ← var_limit
+
+        # 2.  GaussNoise keeps var_limit
+        A.GaussNoise(var_limit=(0, 50), p=0.3),
+
+        # 3.  CoarseDropout new signature
         A.CoarseDropout(
-            max_holes=5,
-            max_height=32,
-            max_width=32,
+            num_holes_range=(1, 5),
+            hole_height_range=(8, 32),
+            hole_width_range=(8, 32),
             fill_value=0,
             p=0.3
         ),
+
         A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
         ToTensorV2()
     ])

@@ -16,8 +16,11 @@ train_loader, val_loader = get_dataloaders(CFG)
 model, backbone = build_model(CFG, device)
 
 #criterion = torch.nn.CrossEntropyLoss()
-criterion = DiceLoss(mode='binary', from_logits=True) + \
-            nn.CrossEntropyLoss()
+# criterion1 = DiceLoss(mode='binary', from_logits=True)
+# criterion2 = nn.CrossEntropyLoss()
+criterion_dice = DiceLoss(mode='multiclass', from_logits=True)   # 2 classes
+criterion_ce   = nn.CrossEntropyLoss()
+
 optimizer = torch.optim.AdamW(model.decode_head.parameters(),
                               lr=CFG['lr'],
                               weight_decay=CFG['weight_decay'])
@@ -42,9 +45,9 @@ for epoch in range(1, CFG['epochs']+1):
         img, mask = img.to(device), mask.to(device)
         optimizer.zero_grad()
         logits = model(img)
-        logits = torch.nn.functional.interpolate(
-            logits, size=mask.shape[-2:], mode='bilinear', align_corners=False)
-        loss = criterion(logits, mask)
+        #logits = torch.nn.functional.interpolate(
+        #    logits, size=mask.shape[-2:], mode='bilinear', align_corners=False)
+        loss = 0.5 * criterion_dice(logits, mask) + 0.5 * criterion_ce(logits, mask)
         loss.backward()
 
         total_norm = sum(p.grad.data.norm(2).item()**2
@@ -63,9 +66,9 @@ for epoch in range(1, CFG['epochs']+1):
         for img, mask in val_loader:
             img, mask = img.to(device), mask.to(device)
             logits = model(img)
-            logits = torch.nn.functional.interpolate(
-                logits, size=mask.shape[-2:], mode='bilinear', align_corners=False)
-            val_loss.append(criterion(logits, mask).item())
+            #logits = torch.nn.functional.interpolate(
+            #    logits, size=mask.shape[-2:], mode='bilinear', align_corners=False)
+            val_loss.append(0.5 * criterion_dice(logits, mask).item() + 0.5 * criterion_ce(logits, mask).item())
             val_iou.append(iou_pytorch(logits.argmax(1), mask))
 
     # ---------- logging ----------
