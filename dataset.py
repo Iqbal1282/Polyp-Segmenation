@@ -12,7 +12,8 @@ class SegDataset(Dataset):
         self.files = sorted(
             list(self.img_dir.glob('*.jpg'))  +
             list(self.img_dir.glob('*.jpeg')) +
-            list(self.img_dir.glob('*.png'))
+            list(self.img_dir.glob('*.png')) + 
+            list(self.img_dir.glob('*.tif'))
         )
         if not self.files:
             raise RuntimeError(f'No images found in {self.img_dir}')
@@ -25,7 +26,7 @@ class SegDataset(Dataset):
         img = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
 
         # mask search logic
-        for try_ext in (ext, '.png', '.jpg', '.jpeg'):
+        for try_ext in (ext, '.png', '.jpg', '.jpeg', ".tif"):
             mask_path = self.mask_dir / f'{name}{try_ext}'
             mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
             if mask is not None:
@@ -82,8 +83,8 @@ def get_dataloaders(cfg):
         ToTensorV2()
     ])
 
-    tr_ds = SegDataset(cfg['root']/"Kvasir-SEG"/'images',
-                       cfg['root']/"Kvasir-SEG"/'masks', train_aug)
+    tr_ds = SegDataset(cfg['root']/"ClinicDB_Kvasir"/'images',
+                       cfg['root']/"ClinicDB_Kvasir"/'masks', train_aug)
     vl_ds = SegDataset(cfg['root']/"ETIS-Larib"/'images',
                        cfg['root']/"ETIS-Larib"/'masks', val_aug)
 
@@ -92,3 +93,22 @@ def get_dataloaders(cfg):
     vl_dl = DataLoader(vl_ds, batch_size=cfg['batch_size'], shuffle=False,
                        num_workers=cfg['num_workers'], pin_memory=True)
     return tr_dl, vl_dl
+
+
+if __name__ == '__main__':
+    # simple test
+    from config import CFG
+    train_loader, val_loader = get_dataloaders(CFG)
+    for imgs, masks in train_loader:
+        print('Train batch - imgs:', imgs.shape, 'masks:', masks.shape)
+        break
+    for imgs, masks in val_loader:
+        print('Val batch   - imgs:', imgs.shape, 'masks:', masks.shape)
+        break
+    print('Dataset and DataLoader are working fine.')
+    # number of samples in train and val sets
+    tr_ds = train_loader.dataset
+    vl_ds = val_loader.dataset
+    print(f'Number of training samples: {len(tr_ds)}')
+    print(f'Number of validation samples: {len(vl_ds)}')
+    
