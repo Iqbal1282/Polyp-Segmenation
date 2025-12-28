@@ -8,6 +8,7 @@ from utils import set_seed, iou_pytorch
 from torch.optim.lr_scheduler import OneCycleLR
 from segmentation_models_pytorch.losses import DiceLoss
 import torch.nn as nn
+from utils import PolyLoss
 
 # --- SETUP EXPERIMENT LOGGING ---
 # Create a unique name for this run (e.g., 20231027-143005_kvasir_exp)
@@ -38,6 +39,7 @@ for i in range(cutoff, total_blocks):
 
 criterion_dice = DiceLoss(mode='multiclass', from_logits=True)
 criterion_ce   = nn.CrossEntropyLoss()
+criterion = PolyLoss(num_classes=CFG['num_classes'], gamma=2.0, reduction='mean')
 
 #optimizer = torch.optim.AdamW(model.decode_head.parameters(),
 #                              lr=CFG['lr'],
@@ -78,7 +80,8 @@ for epoch in range(1, CFG['epochs']+1):
         optimizer.zero_grad()
         logits = model(img)
         
-        loss = 0.5 * criterion_dice(logits, mask) + 0.5 * criterion_ce(logits, mask)
+        #loss = 0.5 * criterion_dice(logits, mask) + 0.5 * criterion_ce(logits, mask)
+        loss = criterion(logits, mask)
         loss.backward()
 
         total_norm = sum(p.grad.data.norm(2).item()**2
@@ -100,7 +103,9 @@ for epoch in range(1, CFG['epochs']+1):
         for img, mask in val_loader:
             img, mask = img.to(device), mask.to(device)
             logits = model(img)
-            val_loss.append(0.5 * criterion_dice(logits, mask).item() + 0.5 * criterion_ce(logits, mask).item())
+            # loss = 0.5 * criterion_dice(logits, mask) + 0.5 * criterion_ce(logits, mask)
+            loss = criterion(logits, mask)
+            val_loss.append(loss.item())
             val_iou.append(iou_pytorch(logits.argmax(1), mask))
             val_dice.append(1 - criterion_dice(logits, mask).item())
 
