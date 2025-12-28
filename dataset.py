@@ -85,8 +85,8 @@ def get_dataloaders(cfg):
 
     tr_ds = SegDataset(cfg['root']/"ClinicDB_Kvasir"/'images',
                        cfg['root']/"ClinicDB_Kvasir"/'masks', train_aug)
-    vl_ds = SegDataset(cfg['root']/"ETIS-Larib"/'images',
-                       cfg['root']/"ETIS-Larib"/'masks', val_aug)
+    vl_ds = SegDataset(cfg['root']/"CVC-ColonDB"/'images',
+                       cfg['root']/"CVC-ColonDB"/'masks', val_aug)
 
     tr_dl = DataLoader(tr_ds, batch_size=cfg['batch_size'], shuffle=True,
                        num_workers=cfg['num_workers'], pin_memory=True)
@@ -111,4 +111,3 @@ if __name__ == '__main__':
     vl_ds = val_loader.dataset
     print(f'Number of training samples: {len(tr_ds)}')
     print(f'Number of validation samples: {len(vl_ds)}')
-    
