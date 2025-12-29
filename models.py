@@ -121,13 +121,68 @@ class WaveletGate(nn.Module):
         return patches * gate
     
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class StochasticUncertaintyGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        # The CNN now outputs 2 * embed_dim channels 
+        # (one for the mean 'mu' and one for the log-variance 'log_var')
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, embed_dim * 2, 1) 
+        )
+        self.softplus = nn.Softplus() # Ensures variance is positive
+
+    def forward(self, patches: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        B, D, Hp, Wp = patches.shape
+        H, W = image.shape[-2:]
+
+        # 1. Standard Feature Extraction (Using your original HSV + Edge logic)
+        gray = image.mean(dim=1, keepdim=True)
+        edge = torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]) # Simple edge for example
+        edge = F.pad(edge, (0, 1)) 
+        # ... (Assuming prior_in is processed to size B, 4, Hp, Wp as before)
+        prior_in = F.interpolate(torch.cat([image, edge.mean(1, keepdim=True)], dim=1), 
+                                 size=(Hp, Wp), mode='bilinear')
+
+        # 2. Predict Distribution Parameters
+        stats = self.cnn(prior_in)
+        mu, log_var = torch.chunk(stats, 2, dim=1)
+        
+        # We use Sigmoid on mu to keep it in range [0, 1]
+        mu = torch.sigmoid(mu)
+        # Variance should be positive; log_var helps with numerical stability
+        std = torch.exp(0.5 * log_var)
+
+        # 3. The Reparameterization Trick
+        if self.training:
+            # Sample noise epsilon ~ N(0, 1)
+            epsilon = torch.randn_like(std)
+            # gate = mu + epsilon * sigma
+            gate = mu + epsilon * std
+            # Clamp to keep weights valid
+            gate = torch.clamp(gate, 0.0, 1.0)
+        else:
+            # At inference, use the deterministic mean
+            gate = mu
+
+        return patches * gate
+    
+
 class JepaSeg(nn.Module):
     def __init__(self, backbone, decode_head):
         super().__init__()
         self.backbone = backbone
         self.decode_head = decode_head
-        self.spatial_gate = SpatialPriorGate(backbone.num_features)
-        self.wavelet_gate = WaveletGate(backbone.num_features)
+        #self.spatial_gate = SpatialPriorGate(backbone.num_features)
+        #self.wavelet_gate = WaveletGate(backbone.num_features)
+        self.stochastic_gate = StochasticUncertaintyGate(backbone.num_features)
 
     def forward(self, x):
         # frozen ViT gives patch tokens
@@ -136,8 +191,8 @@ class JepaSeg(nn.Module):
         h = w = int(math.sqrt(N))                          # 28
         patches = patches.view(B, h, w, D).permute(0, 3, 1, 2)  # (B, D, h, w)
         #hsv_patches = self.spatial_gate(patches, x)            # apply spatial prior gating
-        patches = self.wavelet_gate(patches, x)       # apply wavelet gating
-
+        #patches = self.wavelet_gate(patches, x)       # apply wavelet gating
+        patches = self.stochastic_gate(patches, x)
         # combine both gated features along with addition
         #patches = hsv_patches + haar_patches
         
