@@ -135,11 +135,11 @@ class JepaSeg(nn.Module):
         B, N, D = patches.shape
         h = w = int(math.sqrt(N))                          # 28
         patches = patches.view(B, h, w, D).permute(0, 3, 1, 2)  # (B, D, h, w)
-        hsv_patches = self.spatial_gate(patches, x)            # apply spatial prior gating
-        haar_patches = self.wavelet_gate(patches, x)       # apply wavelet gating
+        #hsv_patches = self.spatial_gate(patches, x)            # apply spatial prior gating
+        patches = self.wavelet_gate(patches, x)       # apply wavelet gating
 
         # combine both gated features along with addition
-        patches = hsv_patches + haar_patches
+        #patches = hsv_patches + haar_patches
         
         logits = self.decode_head(patches)                 # (B, num_cls, h, w)
         return logits
