@@ -3,6 +3,7 @@ import timm
 import segmentation_models_pytorch as smp
 import torch.nn as nn
 import torch.nn.functional as F
+import kornia as K
 
 class UpsampleBlock(nn.Module):
     def __init__(self, in_c, out_c, scale=2):
@@ -27,13 +28,106 @@ class UPerHead(nn.Module):
     def forward(self, x):
         x = self.up4(self.up3(self.up2(self.up1(x))))     # 448×448
         return self.final(x)
+    
 
+class SpatialPriorGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, embed_dim, 1)
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, patches: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        B, D, Hp, Wp = patches.shape          # patch grid
+        H, W = image.shape[-2:]
+
+        hsv = K.color.rgb_to_hsv(image)                       # (B, 3, H, W)
+        gray = image.mean(dim=1, keepdim=True)                # (B, 1, H, W)
+        edge = K.filters.sobel(gray)                          # (B, 1, H, W)
+
+        # 3. concat & down-sample to patch resolution
+        prior_in = torch.cat([hsv, edge], dim=1)              # (B, 4, H, W)
+        if (H, W) != (Hp * 16, Wp * 16):                      # safety
+            prior_in = F.avg_pool2d(prior_in, kernel_size=16, stride=16)
+        else:
+            prior_in = prior_in.view(B, 4, Hp, 16, Wp, 16).mean(dim=(3, 5))
+
+        # 4. gate
+        gate = self.sigmoid(self.cnn(prior_in))               # (B, D, Hp, Wp)
+        return patches * gate
+
+class WaveletGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        
+        # The Haar DWT produces 4 sub-bands (LL, LH, HL, HH).
+        # For a 3-channel RGB image, this results in 3 * 4 = 12 channels.
+        self.cnn = nn.Sequential(
+            nn.Conv2d(12, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, embed_dim, 1)
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def get_wavelet_features(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Performs a 2D Haar Wavelet Transform using fixed-weight slicing.
+        Input x: (B, 3, H, W)
+        Output: (B, 12, H/2, W/2)
+        """
+        # Slicing the image into 2x2 blocks for Haar decomposition
+        x00 = x[:, :, 0::2, 0::2]
+        x10 = x[:, :, 1::2, 0::2]
+        x01 = x[:, :, 0::2, 1::2]
+        x11 = x[:, :, 1::2, 1::2]
+
+        # Haar Wavelet formulas
+        ll = (x00 + x10 + x01 + x11) / 4.0
+        lh = (x00 - x10 + x01 - x11) / 4.0
+        hl = (x00 + x10 - x01 - x11) / 4.0
+        hh = (x00 - x10 - x01 + x11) / 4.0
+
+        return torch.cat([ll, lh, hl, hh], dim=1)
+
+    def forward(self, patches: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        B, D, Hp, Wp = patches.shape
+        H, W = image.shape[-2:]
+
+        # 1. Extract Wavelet features (Low/High frequency sub-bands)
+        # Returns (B, 12, H/2, W/2)
+        wavelet_feats = self.get_wavelet_features(image)
+
+        # 2. Down-sample to patch resolution
+        # Note: wavelet_feats is already H/2, W/2. 
+        # If patches are 16x16, we need to pool by a factor of 8 more.
+        if (H // 2, W // 2) != (Hp, Wp):
+            # Calculate required pooling factor
+            pool_factor = (H // 2) // Hp
+            prior_in = F.avg_pool2d(wavelet_feats, kernel_size=pool_factor, stride=pool_factor)
+        else:
+            prior_in = wavelet_feats
+
+        # 3. Generate the gate
+        gate = self.sigmoid(self.cnn(prior_in))  # (B, D, Hp, Wp)
+
+        # 4. Apply gate to Transformer patches
+        return patches * gate
+    
 
 class JepaSeg(nn.Module):
     def __init__(self, backbone, decode_head):
         super().__init__()
         self.backbone = backbone
         self.decode_head = decode_head
+        self.spatial_gate = SpatialPriorGate(backbone.num_features)
+        self.wavelet_gate = WaveletGate(backbone.num_features)
 
     def forward(self, x):
         # frozen ViT gives patch tokens
@@ -41,6 +135,12 @@ class JepaSeg(nn.Module):
         B, N, D = patches.shape
         h = w = int(math.sqrt(N))                          # 28
         patches = patches.view(B, h, w, D).permute(0, 3, 1, 2)  # (B, D, h, w)
+        hsv_patches = self.spatial_gate(patches, x)            # apply spatial prior gating
+        haar_patches = self.wavelet_gate(patches, x)       # apply wavelet gating
+
+        # combine both gated features along with addition
+        patches = hsv_patches + haar_patches
+        
         logits = self.decode_head(patches)                 # (B, num_cls, h, w)
         return logits
 
@@ -61,7 +161,8 @@ def build_model(cfg, device):
         base=256
     ).to(device)
 
-    model = JepaSeg(backbone, decode_head)
+    model = JepaSeg(backbone, decode_head).to(device)
+
     return model, backbone
 
 
@@ -76,5 +177,5 @@ if __name__ == '__main__':
 
 
     print(model)
-    #print(logits.shape)   # (2, 2, 224, 224)
+    print(logits.shape)   # (2, 2, 224, 224)
     #assert logits.shape == (2, 2, 224, 224)

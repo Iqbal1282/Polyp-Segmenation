@@ -13,7 +13,8 @@ from utils import PolyLoss
 # --- SETUP EXPERIMENT LOGGING ---
 # Create a unique name for this run (e.g., 20231027-143005_kvasir_exp)
 current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-exp_name = f"{current_time}_{CFG.get('exp_name', 'civicdb_kvasir_colondbijepa_seg')}"
+exp_input_details = "spatial_wavelet_UPerHead"
+exp_name = f"{current_time}_{CFG.get('exp_name', f'{exp_input_details}_ijepa_seg')}"
 log_dir = os.path.join('runs', exp_name)
 writer = SummaryWriter(log_dir)
 
