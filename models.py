@@ -175,6 +175,93 @@ class StochasticUncertaintyGate(nn.Module):
         return patches * gate
     
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import kornia as K
+
+
+# ---------- your existing HSV gate ----------
+class SpatialPriorGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, 3, padding=1),  # HSV(3) + edge(1)
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, embed_dim, 1)
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, patches, image):
+        B, D, Hp, Wp = patches.shape
+        # HSV + edge (Sobel)
+        hsv = K.color.rgb_to_hsv(image)
+        gray = image.mean(1, keepdim=True)
+        edge = K.filters.sobel(gray)
+        prior_in = torch.cat([hsv, edge], 1)
+        # down-sample to patch grid
+        if prior_in.shape[-2:] != (Hp, Wp):
+            prior_in = F.avg_pool2d(prior_in, kernel_size=16, stride=16)
+        gate = self.sigmoid(self.cnn(prior_in))
+        return patches * gate
+
+
+# ---------- stochastic uncertainty gate ----------
+class StochasticUncertaintyGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        # outputs μ and logσ²
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, embed_dim * 2, 1)  # μ ∈ ℝᴰ, logσ² ∈ ℝᴰ
+        )
+
+    def forward(self, patches, image):
+        B, D, Hp, Wp = patches.shape
+        # same prep as HSV gate
+        hsv = K.color.rgb_to_hsv(image)
+        gray = image.mean(1, keepdim=True)
+        edge = K.filters.sobel(gray)
+        prior_in = torch.cat([hsv, edge], 1)
+        if prior_in.shape[-2:] != (Hp, Wp):
+            prior_in = F.avg_pool2d(prior_in, kernel_size=16, stride=16)
+
+        stats = self.cnn(prior_in)  # (B, 2D, Hp, Wp)
+        mu, log_var = torch.chunk(stats, 2, dim=1)
+        mu = torch.sigmoid(mu)  # keep μ ∈ (0,1)
+        sigma = torch.exp(0.5 * log_var)  # σ > 0
+
+        if self.training:  # stochastic during training
+            eps = torch.randn_like(sigma)
+            gate = torch.clamp(mu + eps * sigma, 0.0, 1.0)
+        else:  # deterministic at test time
+            gate = mu
+
+        return patches * gate
+
+
+# ---------- dual gate with learnable fusion ----------
+class DualGate(nn.Module):
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.spatial_gate = SpatialPriorGate(embed_dim)
+        self.bayes_gate = StochasticUncertaintyGate(embed_dim)
+        # learnable 1×1 fusion of the two gates
+        self.fuse = nn.Conv2d(embed_dim * 2, embed_dim, 1, bias=True)
+
+    def forward(self, patches, image):
+        g1 = self.spatial_gate(patches, image)  # deterministic
+        g2 = self.bayes_gate(patches, image)    # stochastic (train) / mean (test)
+        # fuse softly
+        fused = torch.sigmoid(self.fuse(torch.cat([g1, g2], dim=1)))
+        return patches * fused
+    
+
 class JepaSeg(nn.Module):
     def __init__(self, backbone, decode_head):
         super().__init__()
@@ -182,7 +269,8 @@ class JepaSeg(nn.Module):
         self.decode_head = decode_head
         #self.spatial_gate = SpatialPriorGate(backbone.num_features)
         #self.wavelet_gate = WaveletGate(backbone.num_features)
-        self.stochastic_gate = StochasticUncertaintyGate(backbone.num_features)
+        #self.stochastic_gate = StochasticUncertaintyGate(backbone.num_features)
+        self.dual_gate = DualGate(backbone.num_features)
 
     def forward(self, x):
         # frozen ViT gives patch tokens
@@ -192,10 +280,11 @@ class JepaSeg(nn.Module):
         patches = patches.view(B, h, w, D).permute(0, 3, 1, 2)  # (B, D, h, w)
         #hsv_patches = self.spatial_gate(patches, x)            # apply spatial prior gating
         #patches = self.wavelet_gate(patches, x)       # apply wavelet gating
-        patches = self.stochastic_gate(patches, x)
+        #patches = self.stochastic_gate(patches, x)
         # combine both gated features along with addition
         #patches = hsv_patches + haar_patches
-        
+        patches = self.dual_gate(patches, x)
+
         logits = self.decode_head(patches)                 # (B, num_cls, h, w)
         return logits
 
